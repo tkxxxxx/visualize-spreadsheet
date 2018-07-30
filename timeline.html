@@ -1,0 +1,213 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+        <script src="https://apis.google.com/js/platform.js?onload=init" async defer></script>
+    </head>
+    <body>
+        <div style="height: 1000px;">
+            <div id="timeline_div" style="height: inherit;"></div>
+        </div>
+        <script>
+            const params = window.location.search.substr(1).split("&").map(function(n) {
+                return n = n.split("="),
+                this[n[0]] = n[1],
+                this
+            }
+            .bind({}))[0];
+
+            const gid = 827875260;
+            const ssid = '1-lmuF8lTD9RBXJizZWTj81wk-1mO8yloYY6BOQxt3a0';
+            const header = 2;
+
+            const dataSourceUrl = 'https://docs.google.com/spreadsheets/d/' + ssid + '/gviz/tq?gid=' + gid + '&headers=' + header;
+            const queryString = 'SELECT M,J,C,D,E,F,A ORDER BY C DESC ,D DESC LIMIT 150';
+            const interval = 60;
+
+            var authConfig = {
+                client_id: '815619535284-q6566dilnnq8df1eubmsbq4tv81rbeft.apps.googleusercontent.com',
+                scope: 'https://www.googleapis.com/auth/drive.readonly',
+                response_type: 'permission'
+            }
+
+            var query;
+            const minute = 1000 * 60;
+            const hour = minute * 60;
+            google.charts.load('current', {
+                'packages': ['table', 'timeline'],
+                'language': 'ja'
+            });
+
+            function init() {
+                if (!params.filter) {
+                    alert('urlパラメータに"filter"を指定してください。\n　例: https://example.com:8000/page.html?filter=-8,10');
+                    return;
+                }
+                gapi.load('auth2', function() {
+                    google.charts.setOnLoadCallback(drawTimeline);
+                });
+            }
+
+            function getAccessToken(prompt) {
+                authConfig.prompt = prompt;
+                return new Promise((resolve,reject)=>{
+                    gapi.auth2.authorize(authConfig, function(response) {
+                        if (response.error) {
+                            reject(response);
+                            return;
+                        }
+                        query.Lla = dataSourceUrl + '&access_token=' + response.access_token;
+                        console.log(response);
+                        resolve(response);
+                    });
+                }
+                );
+            }
+
+            function drawTimeline() {
+                query = new google.visualization.Query(dataSourceUrl);
+                query.setQuery(queryString);
+                query.setRefreshInterval(interval);
+
+                getAccessToken('none').then(()=>{
+                    query.send(handleQueryResponse);
+                }
+                , (err)=>{
+                    console.log('faild implicit auth. going to prompted auth.');
+                    console.log(err);
+                    if (err.error === "immediate_failed") {
+                        getAccessToken('consent').then((res)=>{
+                            console.log('consent accepted');
+                            console.log(res)
+                            query.send(handleQueryResponse);
+                        }
+                        , (err)=>{
+                            console.log('consent rejected');
+                            console.log(err);
+                        }
+                        );
+                    }
+                }
+                );
+            }
+
+            function handleQueryResponse(response) {
+
+                getAccessToken('none').then((res)=>{}
+                , (err)=>{
+                    console.log(err)
+                }
+                );
+
+                if (response.isError()) {
+                    alert('Error in query: ' + response.getMessage() + ' ' + response.getDetailedMessage());
+                    return;
+                }
+                var data = response.getDataTable();
+                var timeline = new google.visualization.Timeline(document.getElementById('timeline_div'));
+                var dataTable = new google.visualization.DataTable();
+                dataTable.addColumn({
+                    type: 'string',
+                    id: 'Group'
+                });
+                dataTable.addColumn({
+                    type: 'string',
+                    id: 'Task'
+                });
+                dataTable.addColumn({
+                    'type': 'string',
+                    'role': 'tooltip',
+                    'p': {
+                        'html': true
+                    }
+                });
+                //dataTable.addColumn({'type': 'string', 'role': 'tooltip'});
+                dataTable.addColumn({
+                    type: 'date',
+                    id: 'Start'
+                });
+                dataTable.addColumn({
+                    type: 'date',
+                    id: 'End'
+                });
+
+                for (var i = 0; i < data.getNumberOfRows(); i++) {
+                    if (data.getValue(i, 0) !== null && data.getValue(i, 1) !== null && data.getValue(i, 2) !== null && data.getValue(i, 3) !== null && data.getValue(i, 4) !== null & data.getValue(i, 5) !== null) {
+                        var group = data.getValue(i, 0) ? data.getValue(i, 0) : 'NA';
+                        var task = data.getValue(i, 1) ? data.getValue(i, 1) : 'NA';
+                        var start = new Date(data.getValue(i, 2).getTime() + data.getValue(i, 3)[0] * hour + data.getValue(i, 3)[1] * minute);
+                        var end = new Date(data.getValue(i, 4).getTime() + data.getValue(i, 5)[0] * hour + data.getValue(i, 5)[1] * minute);
+                        var duration = (end.getTime() - start.getTime()) / hour;
+
+                        var status = data.getValue(i, 6) ? data.getValue(i, 6) : 'NA'
+                        if (status === "完了" || status === "取り消し" || status === "未完了" || status === "再調整") {
+                            task = status + ":" + task;
+                            //} else if ( status === "選択してください" ) {
+                            //  task = "????:" +  task ;
+                        } else {
+                            ;//task = "不明:" +  task d;
+                        }
+
+                        var filter = {
+                            start: Date.now() + new Number(params.filter.split(",")[0]) * hour,
+                            end: Date.now() + new Number(params.filter.split(",")[1]) * hour
+                        };
+                        if (end.getTime() > filter.start && start.getTime() < filter.end) {
+                            dataTable.addRow([group, task, tooltip(group, task, start, end, status), start.getTime() > filter.start ? start : new Date(filter.start), end.getTime() < filter.end ? end : new Date(filter.end)]);
+                        }
+                    }
+                }
+                const options = {
+                    hAxis: {
+                        minValue: filter ? new Date(filter.start) : null,
+                        maxValue: filter ? new Date(filter.end) : null,
+                        //format: 'MMMd HH:mm',
+                        format: 'HH:mm',
+                        //format: 'HH:mm:ss',
+                        tooltip: {
+                            isHtml: true
+                        }
+                    }
+                };
+                timeline.draw(dataTable, options);
+                drawVerticalLine();
+            }
+
+            function drawVerticalLine() {
+                [s,e] = params.filter.split(",");
+                ratio = (-s) / (-s + +e);
+                d = document.getElementById("timeline_div");
+                svg = d.getElementsByTagName('svg')[d.getElementsByTagName('svg').length - 1]
+
+                offset = svg.children[1].children[1].attributes.d.value.split(",")[0].substr(1)
+                posX = (svg.attributes.width.value - offset) * ratio;
+                var newElement = document.createElementNS("http://www.w3.org/2000/svg", 'path');
+                //newElement.setAttribute("d","M " + (+posX + +offset) +  " 0 l 0 " + svg.attributes.height.value );
+                newElement.setAttribute("d", "M " + (+posX + +offset) + " 0 l 0 " + svg.children[1].getBBox().height);
+                newElement.style.stroke = "#0a0";
+                newElement.style.strokeWidth = 20;
+                newElement.style.strokeOpacity = 0.2;
+                svg.appendChild(newElement);
+            }
+
+            function tooltip(group, task, start, end, status) {
+                var html = '';
+                html += '<table>';
+                html += '<tr><th>key</th><th>value</th></tr>';
+                html += '<tr><td>owner</td><td>' + group + '</td></tr>';
+                html += '<tr><td>task</td><td>' + task + '</td></tr>';
+                html += '<tr><td>start</td><td>' + start.toLocaleDateString("ja") + " " + start.toLocaleTimeString("ja") + '</td></tr>';
+                html += '<tr><td>end</td><td>' + end.toLocaleDateString("ja") + " " + end.toLocaleTimeString("ja") + '</td></tr>';
+                html += '<tr><td>duration</td><td>' + (end.getTime() - start.getTime()) / hour + 'h</td></tr>';
+                if (status) {
+                    html += '<tr><td>status</td><td>' + status + '</td></tr>';
+                }
+                html += '</table>';
+                return html;
+            }
+        </script>
+    </body>
+</html>
+
